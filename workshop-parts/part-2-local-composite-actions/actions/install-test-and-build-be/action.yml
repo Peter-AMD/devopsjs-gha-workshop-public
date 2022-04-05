@@ -1,0 +1,42 @@
+
+name: Install, lint, test and build
+description: Install NodeJS deps and lint, test and build the code
+inputs:
+  node_version:
+    description: NodeJS version
+    required: false
+  npm_registry_token:
+    description: NPM Registry token
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v2
+      with:
+        node-version: ${{ inputs.node_version || env.NODE_VERSION }}
+        registry-url: https://your.registry.com/
+        scope: '@yourscope'
+    - name: Cache node modules
+      uses: actions/cache@v2
+      id: npm-cache
+      with:
+        path: |-
+          "**/node_modules"
+        key: npm-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          npm-
+    - name: Install Node.js dependencies
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm_registry_token }}
+      run: npm install
+      shell: bash
+    - name: Lint
+      run: npm run lint
+      shell: bash
+    - name: Unit Tests
+      run: npm test
+      shell: bash
+    - name: Build
+      run: npm run build
+      shell: bash

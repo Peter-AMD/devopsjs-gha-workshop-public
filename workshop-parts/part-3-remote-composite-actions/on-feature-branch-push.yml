@@ -1,0 +1,145 @@
+name: Feature Branch (Stage)
+
+# on:
+#   push:
+#     branches-ignore:
+#       - main
+on:
+  push:
+    branches:
+      - feat/gha-workshop-*
+
+env:
+  ATTENDEE_NAME: david-rubio
+  ENVIRONMENT: stage
+  NODE_VERSION: 14
+  AWS_REGION: eu-west-3
+  AWS_ACCOUNT_ID_STAGE: "<YOUR_ACCOUNT_ID_STAGE>"
+  AWS_ACCOUNT_ID_PROD: "<YOUR_ACCOUNT_ID_PROD>"
+  TERRAFORM_OUTPUTS_FILE: tf-output.json
+
+jobs:
+  init-deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+    steps:
+      - uses: chrnorm/deployment-action@releases/v1
+        name: Create GitHub deployment
+        id: deployment
+        with:
+          token: "${{ github.token }}"
+          target_url: http://my-app-url.${{ env.ENVIRONMENT }}.com
+          environment: ${{ env.ENVIRONMENT }}
+
+  backend:
+    name: Install, test, build and upload Lambda
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      LAMBDA_NAME: lambda-greeter
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/checkout@v2
+        with:
+          repository: davidrv87/devopsjs-gha-workshop-actions
+          token: ${{ secrets.GLOBAL_GITHUB_TOKEN }}
+          ref: v1.0.0
+          path: common-actions
+      - uses: ./common-actions/install-test-and-build-be
+        with:
+          npm_registry_token: ${{ secrets.NPM_REGISTRY_TOKEN }}
+      - uses: ./common-actions/zip-and-upload-be
+        with:
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_account_id: ${{ env.AWS_ACCOUNT_ID_STAGE }}
+          bucket_prefix: devopsjs-gha-workshop-${{ env.ENVIRONMENT }}-lambdas
+          source_files_path: ./packages/${{ env.LAMBDA_NAME }}/dist
+          output_file: ${{ env.LAMBDA_NAME }}
+
+  infra:
+    name: Plan and apply Terraform
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: stage
+            account-id: AWS_ACCOUNT_ID_STAGE
+            backend-config: config/stage/config.remote
+            var-file: config/stage/terraform.tfvars
+            my-secret-token: GLOBAL_SECRET_TOKEN_STAGE
+          - environment: prod
+            account-id: AWS_ACCOUNT_ID_PROD
+            backend-config: config/prod/config.remote
+            var-file: config/prod/terraform.tfvars
+            my-secret-token: GLOBAL_SECRET_TOKEN_PROD
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/checkout@v2
+        with:
+          repository: davidrv87/devopsjs-gha-workshop-actions
+          token: ${{ secrets.GLOBAL_GITHUB_TOKEN }}
+          ref: v1.0.0
+          path: common-actions
+      - uses: ./common-actions/terraform
+        with:
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_account_id: ${{ env[matrix.account-id] }}
+          my_secret_token: ${{ secrets[matrix.my-secret-token] }}
+          backend_config: ${{ matrix.backend-config }}
+          var_file: ${{ matrix.var-file }}
+          tf_apply: ${{ matrix.environment == env.ENVIRONMENT }}
+
+  frontend:
+    name: Build and deploy frontend
+    needs: infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      FRONTEND_NAME: frontend-greeter
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/checkout@v2
+        with:
+          repository: davidrv87/devopsjs-gha-workshop-actions
+          token: ${{ secrets.GLOBAL_GITHUB_TOKEN }}
+          ref: v1.0.0
+          path: common-actions
+      - uses: ./common-actions/install-build-and-upload-fe
+        with:
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws_account_id: ${{ env.AWS_ACCOUNT_ID_STAGE }}
+
+  deployment-status:
+    needs:
+      - init-deployment
+      - backend
+      - infra
+      - frontend
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Update deployment status (success)
+        if: needs.backend.result == 'success' && needs.infra.result == 'success' && needs.frontend.result == 'success'
+        uses: chrnorm/deployment-status@releases/v1
+        with:
+          token: "${{ github.token }}"
+          target_url: http://my-app-url.${{ env.ENVIRONMENT }}.com
+          state: "success"
+          deployment_id: ${{ needs.init-deployment.outputs.deployment_id }}
+      - name: Update deployment status (failure)
+        if: needs.backend.result == 'failure' || needs.infra.result == 'failure' || needs.frontend.result == 'failure'
+        uses: chrnorm/deployment-status@releases/v1
+        with:
+          token: "${{ github.token }}"
+          target_url: http://my-app-url.${{ env.ENVIRONMENT }}.com
+          state: "failure"
+          deployment_id: ${{ needs.init-deployment.outputs.deployment_id }}

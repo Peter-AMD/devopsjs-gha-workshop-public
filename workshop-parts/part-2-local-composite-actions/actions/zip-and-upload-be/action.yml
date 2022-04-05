@@ -1,0 +1,47 @@
+name: Zip and upload BE
+description: Action to zip lambda code and upload it to S3 bucket
+inputs:
+  aws_access_key_id:
+    description: AWS access key
+    required: true
+  aws_secret_access_key:
+    description: AWS secret access key
+    required: true
+  aws_account_id:
+    description: AWS account id
+    required: true
+  aws_region:
+    description: AWS region
+    required: false
+  bucket_prefix:
+    description: Prefix of the Lambdas artefacts bucket
+    required: true
+  source_files_path:
+    description: Path of the files to pack
+    required: true
+  output_file:
+    description: Name of the file to output (without .zip)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region || env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::${{ inputs.aws_account_id }}:role/gha-ci-automation
+    - name: Shorten commit SHA
+      run: echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-10`" >> $GITHUB_ENV
+      shell: bash
+    - name: Zip Lambda
+      run: |-
+        zip -r ${{ inputs.output_file }}.zip ${{ inputs.source_files_path }}
+        echo "Zip file size: $(du -hs ${{ inputs.output_file }}.zip)"
+      shell: bash
+    - name: Upload Lambda zip file to artefacts bucket
+      run: |-
+        aws --region ${{ inputs.aws_region || env.AWS_REGION }} s3 cp ${{ inputs.output_file }}.zip s3://${{ inputs.bucket_prefix }}/${{ github.repository }}/${{ env.LAMBDA_NAME }}-${{ env.SHORT_SHA }}.zip
+      shell: bash

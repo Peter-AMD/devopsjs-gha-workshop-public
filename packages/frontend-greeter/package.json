@@ -1,0 +1,16 @@
+{
+  "name": "frontend-greeter",
+  "version": "1.0.0",
+  "description": "A simple frontend for the GHA workshop",
+  "main": "index.js",
+  "author": "dx@dazn.com",
+  "license": "MIT",
+  "scripts": {
+    "build": "sed -i \"s,API_URL_CHANGEME,${API_URL},\" script.js",
+    "build:local": "sed -i \"\" \"s,API_URL_CHANGEME,${API_URL},\" script.js",
+    "devserver": "live-server"
+  },
+  "devDependencies": {
+    "live-server": "^1.2.1"
+  }
+}

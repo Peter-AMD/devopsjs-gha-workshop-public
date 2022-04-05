@@ -1,0 +1,5 @@
+*.tfout
+*.out
+node_modules
+.terraform
+.DS_Store

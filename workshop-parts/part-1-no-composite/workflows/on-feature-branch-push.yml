@@ -1,0 +1,229 @@
+name: Feature Branch (Stage)
+
+# on:
+#   push:
+#     branches-ignore:
+#       - main
+on:
+  push:
+    branches:
+      - feat/gha-workshop-*
+
+env:
+  ATTENDEE_NAME: david-rubio
+  ENVIRONMENT: stage
+  NODE_VERSION: 14
+  AWS_REGION: eu-west-3
+  AWS_ACCOUNT_ID_STAGE: "<YOUR_ACCOUNT_ID_STAGE>"
+  AWS_ACCOUNT_ID_PROD: "<YOUR_ACCOUNT_ID_PROD>"
+  TERRAFORM_OUTPUTS_FILE: tf-output.json
+
+jobs:
+  init-deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+    steps:
+      - uses: chrnorm/deployment-action@releases/v1
+        name: Create GitHub deployment
+        id: deployment
+        with:
+          token: "${{ github.token }}"
+          target_url: http://my-app-url.${{ env.ENVIRONMENT }}.com
+          environment: ${{ env.ENVIRONMENT }}
+
+  backend:
+    name: Install, test, build and upload Lambda
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      LAMBDA_NAME: lambda-greeter
+      LAMBDAS_BUCKET_PREFIX: devopsjs-gha-workshop-stage-lambdas
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://your.registry.com/
+          scope: '@yourscope'
+      - name: Cache node modules
+        uses: actions/cache@v2
+        id: npm-cache
+        with:
+          path: |-
+            "**/node_modules"
+          key: npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            npm-
+      - name: Install Node.js dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_REGISTRY_TOKEN }}
+        run: npm install
+      - name: Lint
+        run: npm run lint
+      - name: Unit Tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID_STAGE }}:role/gha-ci-automation
+      - name: Shorten commit SHA
+        run: echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-10`" >> $GITHUB_ENV
+      - name: Zip Lambda
+        run: |-
+          zip -r ${{ env.LAMBDA_NAME }}.zip ./packages/${{ env.LAMBDA_NAME }}/dist
+          echo "Zip file size: $(du -hs ${{ env.LAMBDA_NAME }}.zip)"
+      - name: Upload Lambda zip file to artefacts bucket
+        run: |-
+          aws --region ${{ env.AWS_REGION }} s3 cp ${{ env.LAMBDA_NAME }}.zip s3://${{ env.LAMBDAS_BUCKET_PREFIX }}/${{ github.repository }}/${{ env.LAMBDA_NAME }}-${{ env.SHORT_SHA }}.zip
+
+  infra:
+    name: Plan and apply Terraform
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # defaults:
+    #   run:
+    #     working-directory: terraform
+    env:
+      TF_VERSION: "1.1.5"
+      TF_WORKING_DIR: terraform
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: stage
+            account-id: AWS_ACCOUNT_ID_STAGE
+            backend-config: config/stage/config.remote
+            var-file: config/stage/terraform.tfvars
+            my-secret-token: GLOBAL_SECRET_TOKEN_STAGE
+          - environment: prod
+            account-id: AWS_ACCOUNT_ID_PROD
+            backend-config: config/prod/config.remote
+            var-file: config/prod/terraform.tfvars
+            my-secret-token: GLOBAL_SECRET_TOKEN_PROD
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ env[matrix.account-id] }}:role/gha-ci-automation
+      - uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Terraform init
+        run: |-
+          terraform init -backend-config=${{ matrix.backend-config }}
+          terraform workspace select ${{ env.ATTENDEE_NAME }} || terraform workspace new ${{ env.ATTENDEE_NAME }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Terraform format
+        run: terraform fmt -check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Terraform validate
+        run: terraform validate -no-color
+        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Shorten commit SHA
+        run: echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-10`" >> $GITHUB_ENV
+      - name: Terraform plan
+        env:
+          TF_VAR_my_secret_token: ${{ secrets[matrix.my-secret-token] }}
+          TF_VAR_repo: ${{ github.repository }} # This includes 'davidrv87'
+          TF_VAR_commit: ${{ env.SHORT_SHA }}
+        run: |-
+          terraform plan -input=false -out=plan.tfout -var-file=${{ matrix.var-file }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Terraform apply
+        if: matrix.environment == env.ENVIRONMENT
+        run: terraform apply -input=true -auto-approve plan.tfout
+        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Terraform output to json
+        if: matrix.environment == env.ENVIRONMENT
+        run: terraform output -json > ../${{ env.TERRAFORM_OUTPUTS_FILE }}
+        working-directory: ${{ env.TF_WORKING_DIR }}
+      - name: Upload terraform output to GitHub
+        if: matrix.environment == env.ENVIRONMENT
+        uses: actions/upload-artifact@v2
+        with:
+          name: tf-output
+          path: ./${{ env.TERRAFORM_OUTPUTS_FILE }}
+
+  frontend:
+    name: Build and deploy frontend
+    needs: infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      FRONTEND_NAME: frontend-greeter
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID_STAGE }}:role/gha-ci-automation
+      - uses: actions/setup-node@v2
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Download terraform output from GitHub
+        uses: actions/download-artifact@v2
+        with:
+          name: tf-output
+      - name: Terraform output to json
+        id: tf-output
+        run: cat ${{ env.TERRAFORM_OUTPUTS_FILE }}
+      - name: parse output
+        uses: actions/github-script@v3
+        id: api-url
+        env:
+          OUTPUT: ${{ steps.tf-output.outputs.stdout }}
+        with:
+          script: |
+            const obj = JSON.parse(process.env.OUTPUT);
+            console.log("::set-output name=api_url::" + obj.api_domain.value);
+      - name: Build FE and upload
+        env:
+          API_URL: ${{ steps.api-url.outputs.api_url }}
+        run: |-
+          cd packages/${{ env.FRONTEND_NAME }}
+          npm run build
+      - name: Upload FE static files to S3 bucket
+        run: |
+          aws s3 sync ./packages/${{ env.FRONTEND_NAME }} s3://devopsjs-gha-workshop-${{ env.ATTENDEE_NAME }}-${{ env.AWS_REGION }}-${{ env.ENVIRONMENT }} --delete
+
+  deployment-status:
+    needs:
+      - init-deployment
+      - backend
+      - infra
+      - frontend
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Update deployment status (success)
+        if: needs.backend.result == 'success' && needs.infra.result == 'success' && needs.frontend.result == 'success'
+        uses: chrnorm/deployment-status@releases/v1
+        with:
+          token: "${{ github.token }}"
+          target_url: http://my-app-url.${{ env.ENVIRONMENT }}.com
+          state: "success"
+          deployment_id: ${{ needs.init-deployment.outputs.deployment_id }}
+      - name: Update deployment status (failure)
+        if: needs.backend.result == 'failure' || needs.infra.result == 'failure' || needs.frontend.result == 'failure'
+        uses: chrnorm/deployment-status@releases/v1
+        with:
+          token: "${{ github.token }}"
+          target_url: http://my-app-url.${{ env.ENVIRONMENT }}.com
+          state: "failure"
+          deployment_id: ${{ needs.init-deployment.outputs.deployment_id }}

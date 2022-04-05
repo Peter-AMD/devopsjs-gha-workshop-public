@@ -1,0 +1,60 @@
+name: Install, lint, test and build
+description: Install NodeJS deps and lint, test and build the code
+inputs:
+  aws_account_id:
+    description: AWS account ID to configure credentials for
+    required: true
+  aws_access_key_id:
+    description: AWS access key
+    required: true
+  aws_secret_access_key:
+    description: AWS secret access key
+    required: true
+  aws_region:
+    description: AWS region
+    required: false
+  node_version:
+    description: NodeJS version
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region || env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::${{ inputs.aws_account_id }}:role/gha-ci-automation
+    - uses: actions/setup-node@v2
+      with:
+        node-version: ${{ inputs.node_version || env.NODE_VERSION }}
+    - name: Download terraform output from GitHub
+      uses: actions/download-artifact@v2
+      with:
+        name: tf-output
+    - name: Terraform output to json
+      id: tf-output
+      run: cat ${{ env.TERRAFORM_OUTPUTS_FILE }}
+      shell: bash
+    - name: parse output
+      uses: actions/github-script@v3
+      id: api-url
+      env:
+        OUTPUT: ${{ steps.tf-output.outputs.stdout }}
+      with:
+        script: |
+          const obj = JSON.parse(process.env.OUTPUT);
+          console.log("::set-output name=api_url::" + obj.api_domain.value);
+    - name: Build FE and upload
+      env:
+        API_URL: ${{ steps.api-url.outputs.api_url }}
+      run: |-
+        cd packages/${{ env.FRONTEND_NAME }}
+        npm run build
+      shell: bash
+    - name: Upload FE static files to S3 bucket
+      run: |
+        aws s3 sync ./packages/${{ env.FRONTEND_NAME }} s3://devopsjs-gha-workshop-${{ env.ATTENDEE_NAME }}-${{ env.AWS_REGION }}-${{ env.ENVIRONMENT }} --delet
+      shell: bash

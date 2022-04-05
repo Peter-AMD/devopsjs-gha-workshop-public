@@ -1,0 +1,12 @@
+{
+  "api_domain": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://indw7g23zj.execute-api.eu-west-3.amazonaws.com/dev"
+  },
+  "s3_bucket": {
+    "sensitive": false,
+    "type": "string",
+    "value": "devopsjs-gha-workshop-david-rubio-eu-west-3-dev.s3-website.eu-west-3.amazonaws.com"
+  }
+}

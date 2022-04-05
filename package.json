@@ -1,0 +1,27 @@
+{
+  "name": "devopsjs-gha-workshop",
+  "version": "1.0.0",
+  "description": "DevOpsJS GHA Workshop",
+  "main": "index.js",
+  "scripts": {
+    "build": "cd packages/lambda-greeter/ && mkdir -p dist && cp index.js dist/ && cd ../../",
+    "lint": "echo \"Your code is awesome!\"",
+    "test": "echo \"All your tests passed!\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davidrv87/devopsjs-gha-workshop.git"
+  },
+  "keywords": [
+    "devopsjs",
+    "workshop",
+    "gha",
+    "github actions"
+  ],
+  "author": "davidrv87",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/davidrv87/devopsjs-gha-workshop/issues"
+  },
+  "homepage": "https://github.com/davidrv87/devopsjs-gha-workshop#readme"
+}

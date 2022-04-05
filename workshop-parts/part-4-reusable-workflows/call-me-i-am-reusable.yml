@@ -1,0 +1,39 @@
+name: I am reusable
+
+on:
+  workflow_call:
+    inputs:
+      attendee-name:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+    secrets:
+      super-secret-token:
+        required: true
+    outputs:
+      formatted-message:
+        description: "The message with a nice format"
+        value: ${{ jobs.formatter-job.outputs.message }}
+
+jobs:
+  formatter-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      message: ${{ steps.formatter-step.outputs.message }}
+    steps:
+      - name: Step to format the message
+        id: formatter-step
+        run: echo "::set-output name=message::Hello ${{ inputs.attendee-name }}! You are in ${{ inputs.environment }}."
+      - run: echo ${{ steps.formatter-step.outputs.message }}
+
+  magic-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Using the secret token to do some awesome magic
+        env:
+          AUTH_TOKEN: ${{ secrets.super-secret-token }}
+        run: echo "Abracadabra!"

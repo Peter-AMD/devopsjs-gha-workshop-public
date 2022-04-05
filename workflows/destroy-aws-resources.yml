@@ -1,0 +1,58 @@
+name: Destroy AWS resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      attendee-name:
+        description: The name of the attendee (name-surname)
+        required: true
+
+jobs:
+  destroy-aws-resources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TF_VERSION: "1.1.5"
+    defaults:
+      run:
+        working-directory: terraform
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: stage
+            account-id: "<YOUR_ACCOUNT_ID_STAGE>"
+            backend-config: config/stage/config.remote
+            var-file: config/stage/terraform.tfvars
+          - environment: prod
+            account-id: "<YOUR_ACCOUNT_ID_PROD>"
+            backend-config: config/prod/config.remote
+            var-file: config/prod/terraform.tfvars
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-3
+          role-to-assume: arn:aws:iam::${{ matrix.account-id }}:role/gha-ci-automation
+      - uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Terraform init
+        run: |-
+          terraform init -backend-config=${{ matrix.backend-config }}
+          terraform workspace select ${{ github.event.inputs.attendee-name }}
+      - name: Plan Destroy
+        env:
+          TF_VAR_my_secret_token: foo
+          TF_VAR_repo: bar
+          TF_VAR_commit: baz
+        run: terraform plan -destroy -out=plan.tfout -var-file=${{ matrix.var-file }}
+      - name: Apply Destroy
+        run: terraform apply -destroy plan.tfout
+      - name: Delete Terraform workspace for ${{ github.event.inputs.attendee-name }}
+        run: |-
+          terraform workspace select default
+          terraform workspace delete ${{ github.event.inputs.attendee-name }}

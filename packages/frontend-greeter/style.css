@@ -1,0 +1,41 @@
+@font-face {
+  font-family: "Oscine";
+  font-style: normal;
+  font-weight: 800;
+  src: url("https://static.dazndn.com/fonts/Oscine_v2.001_normal_800.woff2")
+      format("woff2"),
+    url("https://static.dazndn.com/fonts/Oscine_v2.001_normal_800.woff")
+      format("woff");
+}
+
+body {
+  background-color: #1d062b;
+  color: #ff00b3;
+  font-family: "Oscine", Arial, Helvetica, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+main {
+  height: 100vh;
+  max-width: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+}
+
+.meme-container {
+  display: flex;
+  justify-content: center;
+}
+
+.meme-container > img {
+  max-width: 50%;
+}
+
+.person-name {
+  color: #00c2ff;
+}

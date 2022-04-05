@@ -1,0 +1,3 @@
+region  = "eu-west-3"
+bucket  = "devopsjs-gha-workshop-stage-tfstate"
+key     = "terraform.tfstate"

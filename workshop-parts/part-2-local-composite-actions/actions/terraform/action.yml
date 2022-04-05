@@ -1,0 +1,92 @@
+name: Terraform init, plan & apply
+description: Configures AWS credentials and perform terraform init, plan & apply
+inputs:
+  aws_account_id:
+    description: AWS account ID to configure credentials for
+    required: true
+  aws_access_key_id:
+    description: AWS access key
+    required: true
+  aws_secret_access_key:
+    description: AWS secret access key
+    required: true
+  aws_region:
+    description: AWS region
+    required: false
+  my_secret_token:
+    description: My secret token
+    required: true
+  backend_config:
+    description: Terraform backend config file location
+    required: true
+  var_file:
+    description: Terraform tfvars file location
+    required: true
+  tf_version:
+    description: Terraform versions to use
+    required: false
+    default: "1.1.5"
+  tf_directory:
+    description: Terraform scripts directory
+    required: false
+    default: terraform
+  tf_apply:
+    description: Should apply changes
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region || env.AWS_REGION }}
+        role-to-assume: arn:aws:iam::${{ inputs.aws_account_id }}:role/gha-ci-automation
+    - uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: ${{ inputs.tf_version || env.TF_VERSION }}
+    - name: Terraform init
+      run: |-
+        terraform init -backend-config=${{ inputs.backend_config }}
+        terraform workspace select ${{ env.ATTENDEE_NAME }} || terraform workspace new ${{ env.ATTENDEE_NAME }}
+      working-directory: ${{ inputs.tf_directory }}
+      shell: bash
+    - name: Terraform format
+      run: terraform fmt -check
+      working-directory: ${{ inputs.tf_directory }}
+      shell: bash
+    - name: Terraform validate
+      run: terraform validate -no-color
+      working-directory: ${{ inputs.tf_directory }}
+      shell: bash
+    - name: Shorten commit SHA
+      run: echo "SHORT_SHA=`echo ${GITHUB_SHA} | cut -c1-10`" >> $GITHUB_ENV
+      shell: bash
+    - name: Terraform plan
+      env:
+        TF_VAR_my_secret_token: ${{ inputs.my_secret_token }}
+        TF_VAR_repo: ${{ github.repository }} # This includes 'davidrv87'
+        TF_VAR_commit: ${{ env.SHORT_SHA }}
+      run: |-
+        terraform plan -input=false -out=plan.tfout -var-file=${{ inputs.var_file }}
+      working-directory: ${{ inputs.tf_directory }}
+      shell: bash
+    - name: Terraform apply
+      if: inputs.tf_apply == 'true'
+      run: terraform apply -input=true -auto-approve plan.tfout
+      working-directory: ${{ inputs.tf_directory }}
+      shell: bash
+    - name: Terraform output to json
+      if: inputs.tf_apply == 'true'
+      run: terraform output -json > ../${{ env.TERRAFORM_OUTPUTS_FILE }}
+      working-directory: ${{ inputs.tf_directory }}
+      shell: bash
+    - name: Upload terraform output to GitHub
+      if: inputs.tf_apply == 'true'
+      uses: actions/upload-artifact@v2
+      with:
+        name: tf-output
+        path: ./${{ env.TERRAFORM_OUTPUTS_FILE }}
